@@ -1,0 +1,353 @@
+
+import React, { useEffect, useMemo, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  Download,
+  Upload,
+  RotateCcw,
+  Plus,
+  Minus,
+  Goal,
+  ShieldCheck,
+  Sparkles,
+  Handshake,
+  MessageSquarePlus,
+  Users,
+  Clock3,
+  Trash2,
+  Check,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
+const STAT_TYPES = [
+  { key: "goals", label: "Goals", icon: Goal, colour: "text-emerald-700", bg: "bg-emerald-50" },
+  { key: "saves", label: "Great saves", icon: ShieldCheck, colour: "text-sky-700", bg: "bg-sky-50" },
+  { key: "assists", label: "Assists", icon: Handshake, colour: "text-violet-700", bg: "bg-violet-50" },
+  { key: "plays", label: "Amazing plays", icon: Sparkles, colour: "text-amber-700", bg: "bg-amber-50" },
+];
+
+const emptyStats = () => ({ goals: 0, saves: 0, assists: 0, plays: 0 });
+const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+const initialData = {
+  gameName: "",
+  halves: {
+    1: { players: [], callouts: [] },
+    2: { players: [], callouts: [] },
+  },
+};
+
+export default function SoccerStatsTracker() {
+  const [data, setData] = useState(() => {
+    try {
+      const saved = localStorage.getItem("soccer-game-stats-v1");
+      return saved ? JSON.parse(saved) : initialData;
+    } catch {
+      return initialData;
+    }
+  });
+  const [half, setHalf] = useState("1");
+  const [newPlayer, setNewPlayer] = useState("");
+  const [newTeam, setNewTeam] = useState("blue");
+  const [calloutText, setCalloutText] = useState("");
+  const [calloutPlayer, setCalloutPlayer] = useState("general");
+  const [savedFlash, setSavedFlash] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem("soccer-game-stats-v1", JSON.stringify(data));
+    setSavedFlash(true);
+    const t = setTimeout(() => setSavedFlash(false), 900);
+    return () => clearTimeout(t);
+  }, [data]);
+
+  const current = data.halves[half];
+
+  const updateHalf = (updater) => {
+    setData((prev) => ({
+      ...prev,
+      halves: {
+        ...prev.halves,
+        [half]: typeof updater === "function" ? updater(prev.halves[half]) : updater,
+      },
+    }));
+  };
+
+  const addPlayer = () => {
+    const name = newPlayer.trim();
+    if (!name) return;
+    updateHalf((h) => ({
+      ...h,
+      players: [...h.players, { id: uid(), name, team: newTeam, stats: emptyStats() }],
+    }));
+    setNewPlayer("");
+  };
+
+  const changeStat = (playerId, stat, delta) => {
+    updateHalf((h) => ({
+      ...h,
+      players: h.players.map((p) =>
+        p.id === playerId
+          ? { ...p, stats: { ...p.stats, [stat]: Math.max(0, p.stats[stat] + delta) } }
+          : p
+      ),
+    }));
+  };
+
+  const switchTeam = (playerId) => {
+    updateHalf((h) => ({
+      ...h,
+      players: h.players.map((p) =>
+        p.id === playerId ? { ...p, team: p.team === "blue" ? "red" : "blue" } : p
+      ),
+    }));
+  };
+
+  const removePlayer = (playerId) => {
+    updateHalf((h) => ({
+      ...h,
+      players: h.players.filter((p) => p.id !== playerId),
+      callouts: h.callouts.map((c) => c.playerId === playerId ? { ...c, playerId: "general", playerName: "General" } : c),
+    }));
+    if (calloutPlayer === playerId) setCalloutPlayer("general");
+  };
+
+  const addCallout = () => {
+    const text = calloutText.trim();
+    if (!text) return;
+    const player = current.players.find((p) => p.id === calloutPlayer);
+    updateHalf((h) => ({
+      ...h,
+      callouts: [
+        ...h.callouts,
+        {
+          id: uid(),
+          text,
+          playerId: player?.id || "general",
+          playerName: player?.name || "General",
+          timestamp: new Date().toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" }),
+        },
+      ],
+    }));
+    setCalloutText("");
+  };
+
+  const copyPlayersToSecondHalf = () => {
+    setData((prev) => ({
+      ...prev,
+      halves: {
+        ...prev.halves,
+        2: {
+          ...prev.halves[2],
+          players: prev.halves[1].players.map((p) => ({ ...p, id: uid(), stats: emptyStats() })),
+        },
+      },
+    }));
+    setHalf("2");
+  };
+
+  const exportData = () => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${data.gameName.trim().replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "soccer-game"}-stats.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importData = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        if (!parsed?.halves?.[1] || !parsed?.halves?.[2]) throw new Error();
+        setData(parsed);
+      } catch {
+        alert("That file is not a valid soccer stats export.");
+      }
+    };
+    reader.readAsText(file);
+    event.target.value = "";
+  };
+
+  const resetGame = () => {
+    if (confirm("Reset the entire game and remove all players, stats and call-outs?")) {
+      setData(initialData);
+      setHalf("1");
+    }
+  };
+
+  const score = useMemo(() => {
+    const total = { blue: 0, red: 0 };
+    Object.values(data.halves).forEach((h) =>
+      h.players.forEach((p) => { total[p.team] += p.stats.goals; })
+    );
+    return total;
+  }, [data]);
+
+  const teamPlayers = (team) => current.players.filter((p) => p.team === team);
+
+  return (
+    <div className="min-h-screen bg-slate-100 text-slate-950">
+      <header className="bg-slate-950 text-white shadow-lg">
+        <div className="mx-auto max-w-7xl px-4 py-5 sm:px-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-medium text-emerald-300">
+                <Clock3 className="h-4 w-4" /> Live match capture
+              </div>
+              <h1 className="mt-1 text-2xl font-bold sm:text-3xl">Soccer Game Stats</h1>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="mr-2 flex items-center gap-3 rounded-2xl bg-white/10 px-4 py-2">
+                <span className="font-bold text-blue-300">Blue {score.blue}</span>
+                <span className="text-slate-400">–</span>
+                <span className="font-bold text-red-300">{score.red} Red</span>
+              </div>
+              <Button variant="secondary" size="sm" onClick={exportData}><Download className="mr-2 h-4 w-4" />Export</Button>
+              <label className="inline-flex cursor-pointer items-center rounded-md bg-white px-3 py-2 text-sm font-medium text-slate-900 hover:bg-slate-200">
+                <Upload className="mr-2 h-4 w-4" />Import
+                <input type="file" accept="application/json" className="hidden" onChange={importData} />
+              </label>
+              <Button variant="destructive" size="sm" onClick={resetGame}><RotateCcw className="mr-2 h-4 w-4" />Reset</Button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-7xl space-y-5 p-4 sm:p-6">
+        <div className="flex flex-col gap-3 rounded-2xl bg-white p-4 shadow-sm sm:flex-row sm:items-center">
+          <Input
+            value={data.gameName}
+            onChange={(e) => setData((d) => ({ ...d, gameName: e.target.value }))}
+            placeholder="Game name or fixture, e.g. Friday Social Match"
+            className="h-11 flex-1"
+          />
+          <AnimatePresence>
+            {savedFlash && (
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex items-center gap-1 text-sm text-emerald-700">
+                <Check className="h-4 w-4" /> Saved on this device
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        <Tabs value={half} onValueChange={(v) => { setHalf(v); setCalloutPlayer("general"); }}>
+          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+            <TabsList className="grid h-12 w-full grid-cols-2 sm:w-80">
+              <TabsTrigger value="1" className="text-base">First half</TabsTrigger>
+              <TabsTrigger value="2" className="text-base">Second half</TabsTrigger>
+            </TabsList>
+            {half === "1" && data.halves[1].players.length > 0 && (
+              <Button variant="outline" onClick={copyPlayersToSecondHalf}>Copy players to second half</Button>
+            )}
+          </div>
+
+          {["1", "2"].map((h) => (
+            <TabsContent key={h} value={h} className="mt-5 space-y-5">
+              <Card className="rounded-2xl border-0 shadow-sm">
+                <CardHeader className="pb-3"><CardTitle className="flex items-center gap-2 text-lg"><Users className="h-5 w-5" />Add a player</CardTitle></CardHeader>
+                <CardContent>
+                  <div className="grid gap-3 sm:grid-cols-[1fr_180px_auto]">
+                    <Input value={newPlayer} onChange={(e) => setNewPlayer(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addPlayer()} placeholder="Player name" className="h-11" />
+                    <Select value={newTeam} onValueChange={setNewTeam}>
+                      <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="blue">Blue Team</SelectItem>
+                        <SelectItem value="red">Red Team</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button onClick={addPlayer} className="h-11 bg-emerald-600 hover:bg-emerald-700"><Plus className="mr-2 h-4 w-4" />Add player</Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <div className="grid gap-5 lg:grid-cols-2">
+                <TeamPanel team="blue" players={teamPlayers("blue")} onStat={changeStat} onSwitch={switchTeam} onRemove={removePlayer} />
+                <TeamPanel team="red" players={teamPlayers("red")} onStat={changeStat} onSwitch={switchTeam} onRemove={removePlayer} />
+              </div>
+
+              <Card className="rounded-2xl border-0 shadow-sm">
+                <CardHeader><CardTitle className="flex items-center gap-2 text-lg"><MessageSquarePlus className="h-5 w-5" />Game call-outs</CardTitle></CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid gap-3 md:grid-cols-[220px_1fr_auto]">
+                    <Select value={calloutPlayer} onValueChange={setCalloutPlayer}>
+                      <SelectTrigger className="h-11"><SelectValue placeholder="Select player" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="general">General game call-out</SelectItem>
+                        {current.players.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} · {p.team === "blue" ? "Blue" : "Red"}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <Textarea value={calloutText} onChange={(e) => setCalloutText(e.target.value)} placeholder="Capture a moment, observation or game note…" className="min-h-11" />
+                    <Button onClick={addCallout} className="h-11"><Plus className="mr-2 h-4 w-4" />Add call-out</Button>
+                  </div>
+                  <div className="space-y-2">
+                    {current.callouts.length === 0 ? (
+                      <p className="rounded-xl bg-slate-50 p-5 text-center text-sm text-slate-500">No call-outs captured for this half.</p>
+                    ) : current.callouts.map((c) => (
+                      <motion.div layout key={c.id} className="flex gap-3 rounded-xl border bg-white p-3">
+                        <Badge variant="secondary" className="h-fit shrink-0">{c.playerName}</Badge>
+                        <p className="flex-1 text-sm">{c.text}</p>
+                        <span className="text-xs text-slate-400">{c.timestamp}</span>
+                        <button aria-label="Delete call-out" onClick={() => updateHalf((x) => ({ ...x, callouts: x.callouts.filter((item) => item.id !== c.id) }))} className="text-slate-400 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
+                      </motion.div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+          ))}
+        </Tabs>
+      </main>
+    </div>
+  );
+}
+
+function TeamPanel({ team, players, onStat, onSwitch, onRemove }) {
+  const blue = team === "blue";
+  return (
+    <Card className={`overflow-hidden rounded-2xl border-0 shadow-sm ${blue ? "ring-1 ring-blue-200" : "ring-1 ring-red-200"}`}>
+      <CardHeader className={blue ? "bg-blue-600 text-white" : "bg-red-600 text-white"}>
+        <CardTitle className="flex items-center justify-between">
+          <span>{blue ? "Blue Team" : "Red Team"}</span>
+          <Badge className="bg-white/20 text-white hover:bg-white/20">{players.length} player{players.length === 1 ? "" : "s"}</Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 p-3 sm:p-4">
+        {players.length === 0 ? (
+          <p className="rounded-xl bg-slate-50 p-8 text-center text-sm text-slate-500">No players assigned.</p>
+        ) : players.map((player) => (
+          <motion.div layout key={player.id} className="rounded-2xl border bg-white p-3 shadow-sm">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div className="min-w-0 font-semibold text-slate-900">{player.name}</div>
+              <div className="flex shrink-0 items-center gap-1">
+                <Button variant="ghost" size="sm" onClick={() => onSwitch(player.id)} className="h-8 px-2 text-xs">Move to {blue ? "Red" : "Blue"}</Button>
+                <Button variant="ghost" size="icon" onClick={() => onRemove(player.id)} className="h-8 w-8 text-slate-400 hover:text-red-600"><Trash2 className="h-4 w-4" /></Button>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {STAT_TYPES.map(({ key, label, icon: Icon, colour, bg }) => (
+                <div key={key} className={`rounded-xl p-2 ${bg}`}>
+                  <div className={`mb-1 flex items-center gap-1 text-xs font-medium ${colour}`}><Icon className="h-3.5 w-3.5" />{label}</div>
+                  <div className="flex items-center justify-between">
+                    <Button variant="ghost" size="icon" onClick={() => onStat(player.id, key, -1)} disabled={player.stats[key] === 0} className="h-8 w-8"><Minus className="h-4 w-4" /></Button>
+                    <span className="text-xl font-bold tabular-nums">{player.stats[key]}</span>
+                    <Button size="icon" onClick={() => onStat(player.id, key, 1)} className={`h-8 w-8 ${blue ? "bg-blue-600 hover:bg-blue-700" : "bg-red-600 hover:bg-red-700"}`}><Plus className="h-4 w-4" /></Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
